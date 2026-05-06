@@ -46,8 +46,11 @@ export default function HomeScreen({ navigation }) {
         <Text style={styles.buttonText}>📍 Ver lugares</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.button}>
-        <Text style={styles.buttonText}>🗺️ Crear ruta</Text>
+      <TouchableOpacity 
+        style={styles.button}
+        onPress={() => navigation.navigate("MapaRuta")}
+         >
+          <Text style={styles.buttonText}>🗺️ Crear ruta</Text>
       </TouchableOpacity>
 
       {/* MAPA */}
