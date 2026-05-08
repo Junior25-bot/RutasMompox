@@ -6,9 +6,11 @@ export default function RutasScreen() {
   const [lugares, setLugares] = useState([]);
 
   useEffect(() => {
-    API.get("/lugares")
+    API.get("/api/lugares")
       .then((res) => setLugares(res.data))
-      .catch((err) => console.log(err));
+      .catch((err) => {
+        console.log("RutasScreen API error:", err?.message || err, err?.config || err);
+      });
   }, []);
 
   return (

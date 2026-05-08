@@ -21,11 +21,14 @@ export default function MapaRutaScreen() {
   const [cargando, setCargando] = useState(false);
 
   // 1. Obtener todos los lugares desde el backend
-  useEffect(() => {
-    API.get('/lugares')
-      .then((res) => setLugares(res.data))
-      .catch(() => Alert.alert('Error', 'No se pudieron cargar los lugares'));
-  }, []);
+useEffect(() => {
+  API.get('/api/lugares')
+    .then((res) => setLugares(res.data))
+    .catch((err) => {
+      console.log('MapaRutaScreen GET /api/lugares error:', err?.message || err, err?.config || err);
+      Alert.alert('Error', 'No se pudieron cargar los lugares');
+    });
+}, []);
 
   // 2. Calcular la ruta y luego pedir recomendaciones
   const calcularRuta = async () => {
@@ -36,27 +39,30 @@ export default function MapaRutaScreen() {
     setCargando(true);
     try {
       // 2a. Calcular la ruta más corta
-      const resRuta = await API.post('/ruta', {
+      const resRuta = await API.post('/api/ruta', {
         origen_id: origen,
         destino_id: destino,
       });
       const { ruta: lugaresRuta, distancia_total } = resRuta.data;
 
       // Preparar datos para dibujar en el mapa
-      const puntos = lugaresRuta.map((l) => ({
-        latitude: l.latitud,
-        longitude: l.longitud,
-      }));
+      const puntos = lugaresRuta
+  .filter(l => l.latitud != null && l.longitud != null)
+  .map((l) => ({
+    latitude: parseFloat(l.latitud),
+    longitude: parseFloat(l.longitud),
+  }));
       const ids = lugaresRuta.map((l) => l.id);
       setRuta({ puntos, ids, distancia: distancia_total });
 
       // 2b. Obtener recomendaciones de lugares cercanos a la ruta
-      const resRec = await API.post('/ruta/recomendaciones', {
+      const resRec = await API.post('/api/ruta/recomendaciones', {
         ruta_ids: ids,
         radio: 200, // metros de desvío máximo
       });
       setRecomendaciones(resRec.data.recomendaciones);
     } catch (error) {
+      console.log('MapaRutaScreen calcularRuta error:', error?.message || error, error?.config || error);
       Alert.alert('Error', 'No se pudo calcular la ruta');
     } finally {
       setCargando(false);
@@ -75,18 +81,20 @@ export default function MapaRutaScreen() {
         }}
       >
         {/* Mostrar todos los lugares como marcadores */}
-        {lugares.map((lugar) => (
-          <Marker
-            key={lugar.id}
-            coordinate={{
-              latitude: lugar.latitud,
-              longitude: lugar.longitud,
-            }}
-            title={lugar.nombre}
-            description={lugar.categoria}
-            pinColor={ruta?.ids?.includes(lugar.id) ? 'blue' : '#2e86de'}
-          />
-        ))}
+        {lugares
+  .filter(l => l.latitud != null && l.longitud != null)
+  .map((lugar) => (
+    <Marker
+      key={lugar.id}
+      coordinate={{
+        latitude: parseFloat(lugar.latitud),
+        longitude: parseFloat(lugar.longitud),
+      }}
+      title={lugar.nombre}
+      description={lugar.categoria}
+      pinColor={ruta?.ids?.includes(lugar.id) ? 'blue' : '#2e86de'}
+    />
+  ))}
 
         {/* Dibujar la línea de la ruta */}
         {ruta && (
@@ -98,18 +106,20 @@ export default function MapaRutaScreen() {
         )}
 
         {/* Mostrar recomendaciones (POI) en verde */}
-        {recomendaciones.map((rec) => (
-          <Marker
-            key={`rec-${rec.id}`}
-            coordinate={{
-              latitude: rec.latitud,
-              longitude: rec.longitud,
-            }}
-            title={rec.nombre}
-            description={`${rec.categoria} – A ${rec.distancia_al_camino}m`}
-            pinColor="green"
-          />
-        ))}
+        {recomendaciones
+  .filter(rec => rec.latitud != null && rec.longitud != null)
+  .map((rec) => (
+    <Marker
+      key={`rec-${rec.id}`}
+      coordinate={{
+        latitude: parseFloat(rec.latitud),
+        longitude: parseFloat(rec.longitud),
+      }}
+      title={rec.nombre}
+      description={`${rec.categoria} – A ${rec.distancia_al_camino}m`}
+      pinColor="green"
+    />
+  ))}
       </MapView>
 
       {/* Panel flotante superior: selección de origen/destino */}
