@@ -35,46 +35,55 @@ export default function MapaRutaScreen() {
 }, []);
 
   // 2. Calcular ruta y pedir recomendaciones
-  const calcularRuta = async () => {
-    if (!origen || !destino) {
-      Alert.alert('Atención', 'Selecciona origen y destino');
-      return;
-    }
-    setCargando(true);
-    try {
-      // 2a. Ruta más corta
-      console.log('Enviando origen:', origen, typeof origen, 'destino:', destino, typeof destino);
-      const resRuta = await API.post('/api/ruta', {
-           origen_id: Number(origen),
-           destino_id: Number(destino),
-      });
-      const { ruta: lugaresRuta, distancia_total } = resRuta.data;
+ const calcularRuta = async () => {
+  if (!origen || !destino) {
+    Alert.alert('Atención', 'Selecciona origen y destino');
+    return;
+  }
+  setCargando(true);
+  try {
+    console.log('Enviando origen:', origen, typeof origen, 'destino:', destino, typeof destino);
+    const resRuta = await API.post('/api/ruta', {
+      origen_id: Number(origen),
+      destino_id: Number(destino),
+    });
 
-      // Convertir coordenadas a número (por si vienen como string)
+    const { ruta: lugaresRuta, distancia_total, tiempo_estimado, puntos_ruta, ids_ruta } = resRuta.data;
+
+    // Usar puntos_ruta de OSRM (calles reales) si existen
+    if (puntos_ruta && puntos_ruta.length > 0) {
+      setRuta({
+        puntos: puntos_ruta,
+        ids: ids_ruta || lugaresRuta.map(l => l.id),
+        distancia: distancia_total,
+        tiempo: tiempo_estimado
+      });
+    } else {
+      // Respaldo con los lugares de la ruta
       const puntos = lugaresRuta
         .filter(l => l.latitud != null && l.longitud != null)
         .map(l => ({
           latitude: parseFloat(l.latitud),
           longitude: parseFloat(l.longitud),
         }));
+      setRuta({ puntos, ids: lugaresRuta.map(l => l.id), distancia: distancia_total, tiempo: tiempo_estimado });
+    }
 
-      const ids = lugaresRuta.map(l => l.id);
-      setRuta({ puntos, ids, distancia: distancia_total });
-
-      // 2b. Recomendaciones cercanas
-      const resRec = await API.post('/api/ruta/recomendaciones', {
-        ruta_ids: ids,
-        radio: 200,
-      });
-      setRecomendaciones(resRec.data.recomendaciones);
-    } catch (error) {
-  console.log('Error detalle:', error.response?.status, error.response?.data);
-  const mensajeServidor = error.response?.data?.error || error.message;
-  Alert.alert('Error', `No se pudo calcular la ruta: ${mensajeServidor}`);
-} finally {
-  setCargando(false);
-}
-  };
+    // Recomendaciones cercanas
+    const ids = lugaresRuta.map(l => l.id);
+    const resRec = await API.post('/api/ruta/recomendaciones', {
+      ruta_ids: ids,
+      radio: 200,
+    });
+    setRecomendaciones(resRec.data.recomendaciones);
+  } catch (error) {
+    console.log('Error detalle:', error.response?.status, error.response?.data);
+    const mensajeServidor = error.response?.data?.error || error.message;
+    Alert.alert('Error', `No se pudo calcular la ruta: ${mensajeServidor}`);
+  } finally {
+    setCargando(false);
+  }
+};
 
   return (
     <View style={styles.container}>
@@ -111,23 +120,6 @@ export default function MapaRutaScreen() {
             strokeWidth={4}
           />
         )}
-{/* Red de conexiones (aristas) en gris */}
-{aristas.length > 0 && aristas.map((arista, index) => {
-  const origen = lugares.find(l => l.id === arista.origen_id);
-  const destino = lugares.find(l => l.id === arista.destino_id);
-  if (!origen || !destino) return null;
-  return (
-    <Polyline
-      key={`arista-${index}`}
-      coordinates={[
-        { latitude: parseFloat(origen.latitud), longitude: parseFloat(origen.longitud) },
-        { latitude: parseFloat(destino.latitud), longitude: parseFloat(destino.longitud) },
-      ]}
-      strokeColor="rgba(128, 128, 128, 0.3)"
-      strokeWidth={1}
-    />
-  );
-})}
         {/* Marcadores de recomendaciones */}
         {recomendaciones
           .filter(rec => rec.latitud != null && rec.longitud != null)
@@ -184,7 +176,7 @@ export default function MapaRutaScreen() {
       {ruta && (
         <View style={styles.panel}>
           <Text style={styles.distancia}>
-            Distancia total: {ruta.distancia.toFixed(0)} m
+            Distancia: {ruta.distancia.toFixed(0)} m  |  ⏱ {ruta.tiempo} min
           </Text>
           <ScrollView style={{ maxHeight: 120 }}>
             {recomendaciones.length === 0 ? (
