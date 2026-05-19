@@ -19,18 +19,22 @@ export default function MapaRutaScreen() {
   const [ruta, setRuta] = useState(null);
   const [recomendaciones, setRecomendaciones] = useState([]);
   const [cargando, setCargando] = useState(false);
+  const [aristas, setAristas] = useState([]);
 
-  // 1. Obtener todos los lugares desde el backend
-useEffect(() => {
+  // 1. Cargar lugares desde el backend
+ useEffect(() => {
   API.get('/api/lugares')
     .then((res) => setLugares(res.data))
     .catch((err) => {
-      console.log('MapaRutaScreen GET /api/lugares error:', err?.message || err, err?.config || err);
+      console.log('Error al cargar lugares:', err.message);
       Alert.alert('Error', 'No se pudieron cargar los lugares');
     });
+  API.get('/api/aristas')
+    .then((res) => setAristas(res.data))
+    .catch((err) => console.log('No se pudieron cargar aristas:', err.message));
 }, []);
 
-  // 2. Calcular la ruta y luego pedir recomendaciones
+  // 2. Calcular ruta y pedir recomendaciones
   const calcularRuta = async () => {
     if (!origen || !destino) {
       Alert.alert('Atención', 'Selecciona origen y destino');
@@ -38,91 +42,110 @@ useEffect(() => {
     }
     setCargando(true);
     try {
-      // 2a. Calcular la ruta más corta
+      // 2a. Ruta más corta
+      console.log('Enviando origen:', origen, typeof origen, 'destino:', destino, typeof destino);
       const resRuta = await API.post('/api/ruta', {
-        origen_id: origen,
-        destino_id: destino,
+           origen_id: Number(origen),
+           destino_id: Number(destino),
       });
       const { ruta: lugaresRuta, distancia_total } = resRuta.data;
 
-      // Preparar datos para dibujar en el mapa
+      // Convertir coordenadas a número (por si vienen como string)
       const puntos = lugaresRuta
-  .filter(l => l.latitud != null && l.longitud != null)
-  .map((l) => ({
-    latitude: parseFloat(l.latitud),
-    longitude: parseFloat(l.longitud),
-  }));
-      const ids = lugaresRuta.map((l) => l.id);
+        .filter(l => l.latitud != null && l.longitud != null)
+        .map(l => ({
+          latitude: parseFloat(l.latitud),
+          longitude: parseFloat(l.longitud),
+        }));
+
+      const ids = lugaresRuta.map(l => l.id);
       setRuta({ puntos, ids, distancia: distancia_total });
 
-      // 2b. Obtener recomendaciones de lugares cercanos a la ruta
+      // 2b. Recomendaciones cercanas
       const resRec = await API.post('/api/ruta/recomendaciones', {
         ruta_ids: ids,
-        radio: 200, // metros de desvío máximo
+        radio: 200,
       });
       setRecomendaciones(resRec.data.recomendaciones);
     } catch (error) {
-      console.log('MapaRutaScreen calcularRuta error:', error?.message || error, error?.config || error);
-      Alert.alert('Error', 'No se pudo calcular la ruta');
-    } finally {
-      setCargando(false);
-    }
+  console.log('Error detalle:', error.response?.status, error.response?.data);
+  const mensajeServidor = error.response?.data?.error || error.message;
+  Alert.alert('Error', `No se pudo calcular la ruta: ${mensajeServidor}`);
+} finally {
+  setCargando(false);
+}
   };
 
   return (
     <View style={styles.container}>
       <MapView
         style={styles.map}
-        initialRegion={{
-          latitude: 9.241,
-          longitude: -74.422,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        }}
+       initialRegion={{
+  latitude: 9.2419,
+  longitude: -74.4216,
+  latitudeDelta: 0.003,
+  longitudeDelta: 0.003,
+}}
       >
-        {/* Mostrar todos los lugares como marcadores */}
+        {/* Marcadores de todos los lugares */}
         {lugares
-  .filter(l => l.latitud != null && l.longitud != null)
-  .map((lugar) => (
-    <Marker
-      key={lugar.id}
-      coordinate={{
-        latitude: parseFloat(lugar.latitud),
-        longitude: parseFloat(lugar.longitud),
-      }}
-      title={lugar.nombre}
-      description={lugar.categoria}
-      pinColor={ruta?.ids?.includes(lugar.id) ? 'blue' : '#2e86de'}
-    />
-  ))}
+          .filter(l => l.latitud != null && l.longitud != null)
+          .map((lugar) => (
+            <Marker
+              key={lugar.id}
+              coordinate={{
+                latitude: parseFloat(lugar.latitud),
+                longitude: parseFloat(lugar.longitud),
+              }}
+              title={lugar.nombre}
+              description={lugar.categoria}
+              pinColor={ruta?.ids?.includes(lugar.id) ? 'blue' : '#2e86de'}
+            />
+          ))}
 
-        {/* Dibujar la línea de la ruta */}
-        {ruta && (
+        {/* Línea de la ruta */}
+        {ruta && ruta.puntos?.length > 0 && (
           <Polyline
             coordinates={ruta.puntos}
             strokeColor="#2e86de"
             strokeWidth={4}
           />
         )}
-
-        {/* Mostrar recomendaciones (POI) en verde */}
-        {recomendaciones
-  .filter(rec => rec.latitud != null && rec.longitud != null)
-  .map((rec) => (
-    <Marker
-      key={`rec-${rec.id}`}
-      coordinate={{
-        latitude: parseFloat(rec.latitud),
-        longitude: parseFloat(rec.longitud),
-      }}
-      title={rec.nombre}
-      description={`${rec.categoria} – A ${rec.distancia_al_camino}m`}
-      pinColor="green"
+{/* Red de conexiones (aristas) en gris */}
+{aristas.length > 0 && aristas.map((arista, index) => {
+  const origen = lugares.find(l => l.id === arista.origen_id);
+  const destino = lugares.find(l => l.id === arista.destino_id);
+  if (!origen || !destino) return null;
+  return (
+    <Polyline
+      key={`arista-${index}`}
+      coordinates={[
+        { latitude: parseFloat(origen.latitud), longitude: parseFloat(origen.longitud) },
+        { latitude: parseFloat(destino.latitud), longitude: parseFloat(destino.longitud) },
+      ]}
+      strokeColor="rgba(128, 128, 128, 0.3)"
+      strokeWidth={1}
     />
-  ))}
+  );
+})}
+        {/* Marcadores de recomendaciones */}
+        {recomendaciones
+          .filter(rec => rec.latitud != null && rec.longitud != null)
+          .map((rec) => (
+            <Marker
+              key={`rec-${rec.id}`}
+              coordinate={{
+                latitude: parseFloat(rec.latitud),
+                longitude: parseFloat(rec.longitud),
+              }}
+              title={rec.nombre}
+              description={`${rec.categoria} – A ${rec.distancia_al_camino}m`}
+              pinColor="green"
+            />
+          ))}
       </MapView>
 
-      {/* Panel flotante superior: selección de origen/destino */}
+      {/* Panel de selección */}
       <View style={styles.controles}>
         <Picker
           selectedValue={origen}
@@ -142,7 +165,7 @@ useEffect(() => {
         >
           <Picker.Item label="Selecciona destino..." value={null} />
           {lugares.map((l) => (
-            <Picker.Item key={l.id} label={l.nombre} value={l.id} />
+            <Picker.Item key={`dest-${l.id}`} label={l.nombre} value={l.id} />
           ))}
         </Picker>
 
@@ -157,7 +180,7 @@ useEffect(() => {
         )}
       </View>
 
-      {/* Panel inferior: recomendaciones */}
+      {/* Panel de recomendaciones */}
       {ruta && (
         <View style={styles.panel}>
           <Text style={styles.distancia}>
