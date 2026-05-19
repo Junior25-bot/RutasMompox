@@ -114,10 +114,13 @@ function reconstruirRuta(previos, inicioId, finId) {
   }
   return ruta;
 }
-
+const axios = require('axios');
 // ────────────────────────────────────────
 // POST /api/ruta
 // Recibe: { origen_id, destino_id }
+// ────────────────────────────────────────
+// ────────────────────────────────────────
+// POST /api/ruta (versión con OSRM: calles reales + distancia precisa + tiempo)
 // ────────────────────────────────────────
 app.post('/api/ruta', async (req, res) => {
   try {
@@ -126,55 +129,84 @@ app.post('/api/ruta', async (req, res) => {
       return res.status(400).json({ error: 'origen_id y destino_id son requeridos' });
     }
 
-    // Obtener todas las aristas
-    const [aristas] = await pool.query(
-  'SELECT origen_id, destino_id, peso FROM aristas'
-);
-
-const grafo = {};
-for (const a of aristas) {
-  const orig = a.origen_id.toString();
-  const dest = a.destino_id.toString();
-  const peso = Number(a.peso);
-
-  if (!grafo[orig]) grafo[orig] = {};
-  if (!grafo[dest]) grafo[dest] = {};
-
-  // Agregar en ambos sentidos (grafo no dirigido)
-  grafo[orig][dest] = peso;
-  grafo[dest][orig] = peso; 
-}
-
-    // Ejecutar Dijkstra
-    const { distancias, previos } = dijkstra(grafo, origen_id.toString());
-
-    if (distancias[destino_id.toString()] === Infinity) {
-      return res.status(404).json({ error: 'No existe ruta entre esos puntos' });
-    }
-
-    const rutaIDs = reconstruirRuta(previos, origen_id.toString(), destino_id.toString());
-    if (rutaIDs.length === 0) {
-      return res.status(404).json({ error: 'No se pudo reconstruir la ruta' });
-    }
-
-    // Obtener datos de los lugares de la ruta
-    const placeholders = rutaIDs.map(() => '?').join(',');
-    const [lugaresRuta] = await pool.query(
-      `SELECT id, nombre, latitud, longitud FROM lugares WHERE id IN (${placeholders})`,
-      rutaIDs
+    // 1. Obtener coordenadas de origen y destino
+    const [lugares] = await pool.query(
+      'SELECT id, nombre, latitud, longitud FROM lugares WHERE id IN (?, ?)',
+      [origen_id, destino_id]
     );
 
-    // Ordenar según la ruta
-    const mapa = {};
-    for (const lug of lugaresRuta) {
-      mapa[lug.id] = lug;
+    if (lugares.length !== 2) {
+      return res.status(404).json({ error: 'No se encontraron los lugares especificados' });
     }
-    const rutaOrdenada = rutaIDs.map(id => mapa[parseInt(id)]).filter(Boolean);
+
+    const origen = lugares.find(l => l.id == origen_id);
+    const destino = lugares.find(l => l.id == destino_id);
+
+    // 2. Consultar a OSRM (API gratuita, sin key) para obtener ruta caminando por calles reales
+    // OSRM espera coordenadas en formato: longitud,latitud
+    const url = `https://router.project-osrm.org/route/v1/foot/${origen.longitud},${origen.latitud};${destino.longitud},${destino.latitud}?overview=full&geometries=geojson`;
+
+    let rutaCallejera = null;
+    let distanciaRealMetros = 0;
+    let tiempoEstimadoSegundos = 0;
+
+    try {
+      const osrmResponse = await axios.get(url);
+      if (osrmResponse.data && osrmResponse.data.routes && osrmResponse.data.routes.length > 0) {
+        const route = osrmResponse.data.routes[0];
+        distanciaRealMetros = route.distance; // metros reales por calles
+        tiempoEstimadoSegundos = route.duration; // segundos caminando
+        rutaCallejera = route.geometry.coordinates; // array de [longitud, latitud]
+      }
+    } catch (osrmError) {
+      console.log('OSRM falló, usando línea recta como respaldo:', osrmError.message);
+    }
+
+    // 3. Construir la polilínea (de calles o línea recta como respaldo)
+    let puntos = [];
+
+    if (rutaCallejera && rutaCallejera.length > 0) {
+      // OSRM devuelve [longitud, latitud] → convertir a {latitude, longitude}
+      puntos = rutaCallejera.map(coord => ({
+        latitude: coord[1],
+        longitude: coord[0]
+      }));
+    } else {
+      // Respaldo: línea recta simple
+      puntos = [
+        { latitude: parseFloat(origen.latitud), longitude: parseFloat(origen.longitud) },
+        { latitude: parseFloat(destino.latitud), longitude: parseFloat(destino.longitud) }
+      ];
+      // Calcular distancia en línea recta como último recurso
+      const R = 6371000;
+      const dLat = (destino.latitud - origen.latitud) * Math.PI / 180;
+      const dLon = (destino.longitud - origen.longitud) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(origen.latitud * Math.PI / 180) * Math.cos(destino.latitud * Math.PI / 180) *
+                Math.sin(dLon / 2) ** 2;
+      distanciaRealMetros = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      tiempoEstimadoSegundos = distanciaRealMetros / 1.4; // velocidad media caminando
+    }
+
+    // 4. Obtener recomendaciones cercanas a la ruta (usando el endpoint de recomendaciones)
+    // Simplemente devolvemos los IDs de todos los lugares como referencia
+    const [todosLugares] = await pool.query('SELECT id FROM lugares WHERE id NOT IN (?, ?)', [origen_id, destino_id]);
+    const idsRuta = [Number(origen_id), ...todosLugares.map(l => l.id).slice(0, 3), Number(destino_id)];
+
+    // 5. Obtener datos completos de los lugares en la ruta
+    const [lugaresRuta] = await pool.query(
+      'SELECT id, nombre, latitud, longitud, categoria FROM lugares WHERE id IN (?, ?)',
+      [origen_id, destino_id]
+    );
 
     res.json({
-      ruta: rutaOrdenada,
-      distancia_total: distancias[destino_id.toString()]
+      ruta: lugaresRuta,
+      distancia_total: Math.round(distanciaRealMetros),
+      tiempo_estimado: Math.round(tiempoEstimadoSegundos / 60 * 10) / 10, // minutos con 1 decimal
+      puntos_ruta: puntos,
+      ids_ruta: idsRuta
     });
+
   } catch (err) {
     console.error('Error en /api/ruta:', err.message);
     res.status(500).json({ error: 'Error interno del servidor' });
