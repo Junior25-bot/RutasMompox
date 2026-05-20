@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Animated,
   TouchableOpacity,
+  Image,
 } from "react-native";
 import MapView from "react-native-maps";
 
@@ -22,48 +23,59 @@ export default function HomeScreen({ navigation }) {
     });
   }, []);
 
-  // 🌟 SPLASH SCREEN
   if (!showHome) {
     return (
       <View style={styles.splash}>
         <Animated.Text style={[styles.logo, { opacity: fadeAnim }]}>
           RUTAS MOMPOX
         </Animated.Text>
-        <Text style={styles.subtitle}>Explora Mompox</Text>
+        <Text style={styles.subtitle}>Explora la ciudad colonial</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>¡Bienvenido a Rutas Mompox!</Text>
+      <View style={styles.headerContainer}>
+        <Text style={styles.header}>¡Bienvenido!</Text>
+        <Text style={styles.subHeader}>
+          Encuentra la mejor ruta para tus recorridos en Mompox
+        </Text>
+      </View>
 
-      {/* BOTONES */}
-      <TouchableOpacity
-        style={styles.button}
-        onPress={() => navigation.navigate("Rutas")}
-      >
-        <Text style={styles.buttonText}>📍 Ver lugares</Text>
-      </TouchableOpacity>
+      <View style={styles.cardsContainer}>
+        <TouchableOpacity
+          style={styles.card}
+          onPress={() => navigation.navigate("Rutas")}
+        >
+          <View style={styles.cardIcon}>
+            <Text style={styles.cardIconText}>📍</Text>
+          </View>
+          <Text style={styles.cardTitle}>Ver lugares</Text>
+          <Text style={styles.cardDescription}>
+            Explora sitios de interés, restaurantes y más
+          </Text>
+        </TouchableOpacity>
 
-      <TouchableOpacity 
-        style={styles.button}
-        onPress={() => navigation.navigate("MapaRuta")}
-         >
-          <Text style={styles.buttonText}>🗺️ Crear ruta</Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.card}
+          onPress={() => navigation.navigate("MapaRuta")}
+        >
+          <View style={styles.cardIcon}>
+            <Text style={styles.cardIconText}>🗺️</Text>
+          </View>
+          <Text style={styles.cardTitle}>Crear ruta</Text>
+          <Text style={styles.cardDescription}>
+            Calcula el camino más corto y recibe recomendaciones
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-      {/* MAPA */}
-      <View style={styles.mapContainer}>
-        <MapView
-          style={styles.map}
-          initialRegion={{
-            latitude: 9.242,
-            longitude: -74.425,
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
-          }}
-        />
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>
+          Sistema Inteligente de Recomendación de Rutas y Lugares
+        </Text>
+        <Text style={styles.footerSmall}>Universidad de Cartagena - Mompox</Text>
       </View>
     </View>
   );
@@ -74,56 +86,91 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#252424",
+    backgroundColor: "#1a2a3a",
   },
-
   logo: {
     fontSize: 42,
     fontWeight: "bold",
     color: "#fff",
     letterSpacing: 5,
   },
-
   subtitle: {
     color: "#ccc",
     marginTop: 10,
     fontSize: 14,
   },
-
   container: {
     flex: 1,
-    backgroundColor: "#fff",
-    padding: 15,
+    backgroundColor: "#f0f4f8",
+    justifyContent: "space-between",
   },
-
+  headerContainer: {
+    marginTop: 60,
+    marginHorizontal: 20,
+    marginBottom: 30,
+  },
   header: {
-    fontSize: 22,
+    fontSize: 32,
     fontWeight: "bold",
-    marginBottom: 15,
-    color: "#2c3e50",
+    color: "#1e293b",
   },
-
-  button: {
-    backgroundColor: "#2e86de",
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 10,
+  subHeader: {
+    fontSize: 16,
+    color: "#475569",
+    marginTop: 8,
   },
-
-  buttonText: {
-    color: "#fff",
+  cardsContainer: {
+    marginHorizontal: 20,
+    flex: 1,
+    justifyContent: "center",
+    gap: 20,
+  },
+  card: {
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    padding: 24,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    alignItems: "center",
+  },
+  cardIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#e0f2fe",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  cardIconText: {
+    fontSize: 28,
+  },
+  cardTitle: {
+    fontSize: 20,
     fontWeight: "bold",
+    color: "#0f172a",
+    marginBottom: 8,
+  },
+  cardDescription: {
+    fontSize: 14,
+    color: "#64748b",
     textAlign: "center",
+    lineHeight: 20,
   },
-
-  mapContainer: {
-    flex: 1,
-    marginTop: 10,
-    borderRadius: 15,
-    overflow: "hidden",
+  footer: {
+    alignItems: "center",
+    padding: 20,
   },
-
-  map: {
-    flex: 1,
+  footerText: {
+    fontSize: 12,
+    color: "#94a3b8",
+  },
+  footerSmall: {
+    fontSize: 10,
+    color: "#cbd5e1",
+    marginTop: 4,
   },
 });
