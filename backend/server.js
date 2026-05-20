@@ -275,6 +275,23 @@ app.post('/api/ruta/recomendaciones', async (req, res) => {
 // Iniciar servidor
 // ────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
+// Endpoint para registrar automáticamente las pruebas de eficiencia
+app.post('/api/registro-prueba', async (req, res) => {
+  try {
+    const { origen_id, destino_id, distancia, tiempo, recomendaciones } = req.body;
+    if (!origen_id || !destino_id || distancia == null || tiempo == null) {
+      return res.status(400).json({ error: 'Faltan datos de la prueba' });
+    }
+    await pool.query(
+      'INSERT INTO pruebas (origen_id, destino_id, distancia, tiempo, recomendaciones) VALUES (?, ?, ?, ?, ?)',
+      [origen_id, destino_id, distancia, tiempo, recomendaciones || 0]
+    );
+    res.json({ mensaje: 'Prueba registrada correctamente' });
+  } catch (error) {
+    console.error('Error al registrar prueba:', error.message);
+    res.status(500).json({ error: 'Error al registrar la prueba' });
+  }
+});
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
 });

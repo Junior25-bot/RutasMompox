@@ -88,6 +88,14 @@ export default function MapaRutaScreen({ route }) {
         radio: 200,
       });
       setRecomendaciones(resRec.data.recomendaciones);
+      // Registrar automáticamente la prueba
+      API.post('/api/registro-prueba', {
+        origen_id: Number(origen),
+        destino_id: Number(destino),
+        distancia: distancia_total,
+        tiempo: tiempo_estimado,
+        recomendaciones: resRec.data.recomendaciones.length,
+      }).catch(err => console.log('No se pudo registrar la prueba:', err.message));
       setPanelExpandido(true);
     } catch (error) {
       console.log('Error:', error.response?.status, error.response?.data);
