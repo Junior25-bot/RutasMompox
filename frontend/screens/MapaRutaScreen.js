@@ -18,6 +18,7 @@ export default function MapaRutaScreen({ route }) {
   const [destino, setDestino] = useState(null);
   const [ruta, setRuta] = useState(null);
   const [recomendaciones, setRecomendaciones] = useState([]);
+  const [aristas, setAristas] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [panelExpandido, setPanelExpandido] = useState(true);
 
@@ -34,7 +35,18 @@ export default function MapaRutaScreen({ route }) {
           // Si también tenemos coordenadas de origen, podemos iniciar el cálculo automáticamente
         }
       })
-      .catch(() => Alert.alert('Error', 'No se pudieron cargar los lugares'));
+      .catch((err) => {
+        console.log('Error al cargar lugares:', err.message);
+        Alert.alert('Error', 'No se pudieron cargar los lugares');
+      });
+
+    API.get('/api/aristas')
+      .then((res) => {
+        setAristas(res.data);
+      })
+      .catch((err) => {
+        console.log('Error al cargar aristas:', err.message);
+      });
   }, [destinoInicial]);
 
   // Si se recibió origenCoords, crear un marcador temporal de "Mi ubicación"
@@ -127,6 +139,24 @@ export default function MapaRutaScreen({ route }) {
             pinColor="green"
           />
         )}
+
+        {/* Red de conexiones (aristas) en gris */}
+        {aristas.length > 0 && aristas.map((arista, index) => {
+          const origen = lugares.find(l => l.id === arista.origen_id);
+          const destino = lugares.find(l => l.id === arista.destino_id);
+          if (!origen || !destino) return null;
+          return (
+            <Polyline
+              key={`arista-${index}`}
+              coordinates={[
+                { latitude: parseFloat(origen.latitud), longitude: parseFloat(origen.longitud) },
+                { latitude: parseFloat(destino.latitud), longitude: parseFloat(destino.longitud) },
+              ]}
+              strokeColor="rgba(128, 128, 128, 0.3)"
+              strokeWidth={1.5}
+            />
+          );
+        })}
 
         {/* Lugares normales */}
         {lugares
