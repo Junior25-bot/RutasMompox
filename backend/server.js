@@ -224,9 +224,9 @@ app.post('/api/ruta/recomendaciones', async (req, res) => {
       return res.status(400).json({ error: 'ruta_ids es requerido' });
     }
 
-    // Obtener coordenadas de todos los lugares
+    // Obtener coordenadas de todos los lugares con buena calificación
     const [todosLugares] = await pool.query(
-      'SELECT id, nombre, latitud, longitud, categoria, descripcion, calificacion FROM lugares'
+      'SELECT id, nombre, latitud, longitud, categoria, descripcion, calificacion FROM lugares WHERE calificacion >= 4.0'
     );
 
     const mapaTodos = {};
