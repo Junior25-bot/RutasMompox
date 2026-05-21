@@ -53,7 +53,7 @@ export default function RutasScreen({ navigation }) {
                  cat === "religioso" ? "⛪ Religioso" : 
                  cat === "restaurante" ? "🍔 Gastronomía" : 
                  cat === "hospedaje" ? "🏨 Hospedaje" : 
-                 cat === "plaza" ? " Fountain Plazas" :
+                 cat === "plaza" ? "⛲ Plaza" :
                  cat === "cultural" ? "🎨 Cultural" :
                  cat === "naturaleza" ? "🌿 Naturaleza" :
                  cat === "puente" ? "🌉 Puentes" : "🛒 Comercio"}
