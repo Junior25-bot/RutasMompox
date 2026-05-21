@@ -4,14 +4,13 @@ const mysql = require('mysql2/promise');
 const cors = require('cors');
 const { Heap } = require('heap-js');
 const { getDistance } = require('geolib');
+const axios = require('axios');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ────────────────────────────────────────
-// Conexión a la base de datos
-// ────────────────────────────────────────
+// ── Conexión BD ───────────────────────────────────────────────────
 const pool = mysql.createPool({
   host: process.env.DB_HOST || '127.0.0.1',
   port: process.env.DB_PORT || 3306,
@@ -21,9 +20,6 @@ const pool = mysql.createPool({
   waitForConnections: true,
 });
 
-// ────────────────────────────────────────
-// Prueba de conexión al iniciar
-// ────────────────────────────────────────
 (async () => {
   try {
     const conn = await pool.getConnection();
@@ -35,53 +31,36 @@ const pool = mysql.createPool({
   }
 })();
 
-// ────────────────────────────────────────
-// Endpoint de prueba
-// ────────────────────────────────────────
 app.get('/', (req, res) => res.send('API de rutas Mompox funcionando 🚀'));
 
-// ────────────────────────────────────────
-// Obtener todos los lugares (ya funciona)
-// ────────────────────────────────────────
+// ── GET /api/lugares ──────────────────────────────────────────────
 app.get('/api/lugares', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM lugares');
-    console.log(`📦 /api/lugares → ${rows.length} lugares`);
     res.json(rows);
   } catch (err) {
-    console.error('Error en /api/lugares:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-
-
-// ────────────────────────────────────────
-// Obtener todas las aristas
-// ────────────────────────────────────────
+// ── GET /api/aristas ──────────────────────────────────────────────
 app.get('/api/aristas', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM aristas');
-    console.log(`📦 /api/aristas → ${rows.length} aristas`);
     res.json(rows);
   } catch (err) {
-    console.error('Error en /api/aristas:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ────────────────────────────────────────
-// Algoritmo de Dijkstra
-// ────────────────────────────────────────
+// ── Dijkstra ──────────────────────────────────────────────────────
 function dijkstra(grafo, inicioId) {
   const distancias = {};
   const previos = {};
   const visitados = new Set();
   const cola = new Heap((a, b) => a.distancia - b.distancia);
 
-  for (const nodo of Object.keys(grafo)) {
-    distancias[nodo] = Infinity;
-  }
+  for (const nodo of Object.keys(grafo)) distancias[nodo] = Infinity;
   distancias[inicioId] = 0;
   cola.push({ id: inicioId, distancia: 0 });
 
@@ -89,10 +68,8 @@ function dijkstra(grafo, inicioId) {
     const { id: actual } = cola.pop();
     if (visitados.has(actual)) continue;
     visitados.add(actual);
-
     for (const vecino in grafo[actual]) {
-      const peso = grafo[actual][vecino];
-      const nuevaDist = distancias[actual] + peso;
+      const nuevaDist = distancias[actual] + grafo[actual][vecino];
       if (nuevaDist < distancias[vecino]) {
         distancias[vecino] = nuevaDist;
         previos[vecino] = actual;
@@ -100,111 +77,116 @@ function dijkstra(grafo, inicioId) {
       }
     }
   }
-
   return { distancias, previos };
 }
 
 function reconstruirRuta(previos, inicioId, finId) {
-  const ruta = [finId];
-  let actual = finId;
-  while (actual != inicioId) {
+  const ruta = [String(finId)];
+  let actual = String(finId);
+  while (actual !== String(inicioId)) {
     actual = previos[actual];
-    if (!actual) return [];
+    if (actual === undefined) return []; // sin camino
     ruta.unshift(actual);
   }
   return ruta;
 }
-const axios = require('axios');
-// ────────────────────────────────────────
-// POST /api/ruta
+
+// ── POST /api/ruta ────────────────────────────────────────────────
 // Recibe: { origen_id, destino_id }
-// ────────────────────────────────────────
-// ────────────────────────────────────────
-// POST /api/ruta (versión con OSRM: calles reales + distancia precisa + tiempo)
-// ────────────────────────────────────────
+//      ó  { origen_coords: {lat, lon}, destino_id }
+// Cuando se recibe origen_coords, encuentra el nodo más cercano,
+// corre Dijkstra desde él, y traza OSRM desde las coords reales.
 app.post('/api/ruta', async (req, res) => {
   try {
-    const { origen_id, destino_id } = req.body;
-    if (!origen_id || !destino_id) {
-      return res.status(400).json({ error: 'origen_id y destino_id son requeridos' });
+    const { origen_id, origen_coords, destino_id } = req.body;
+
+    if (!destino_id || (!origen_id && !origen_coords))
+      return res.status(400).json({ error: 'Se requiere destino_id y (origen_id u origen_coords)' });
+
+    const [todosLugares] = await pool.query('SELECT * FROM lugares');
+    const [todasAristas] = await pool.query('SELECT * FROM aristas');
+
+    const mapaLugares = {};
+    todosLugares.forEach(l => { mapaLugares[l.id] = l; });
+
+    // Construir grafo
+    const grafo = {};
+    todosLugares.forEach(l => { grafo[l.id] = {}; });
+    todasAristas.forEach(a => {
+      if (grafo[a.origen_id]) grafo[a.origen_id][a.destino_id] = parseFloat(a.peso);
+    });
+
+    // Resolver origen_id: desde coords GPS → nodo más cercano
+    let origenIdFinal = origen_id ? Number(origen_id) : null;
+    let coordsOrigenReales = null; // coords GPS del usuario (si las hay)
+
+    if (origen_coords) {
+      const lat = parseFloat(origen_coords.lat);
+      const lon = parseFloat(origen_coords.lon);
+      coordsOrigenReales = { lat, lon };
+
+      let minDist = Infinity;
+      for (const l of todosLugares) {
+        const dLat = (parseFloat(l.latitud) - lat) * 111320;
+        const dLon = (parseFloat(l.longitud) - lon) * 111320 * Math.cos(lat * Math.PI / 180);
+        const dist = Math.sqrt(dLat * dLat + dLon * dLon);
+        if (dist < minDist) { minDist = dist; origenIdFinal = l.id; }
+      }
     }
 
-    // 1. Obtener coordenadas de origen y destino
-    const [lugares] = await pool.query(
-      'SELECT id, nombre, latitud, longitud FROM lugares WHERE id IN (?, ?)',
-      [origen_id, destino_id]
-    );
+    if (Number(origenIdFinal) === Number(destino_id))
+      return res.status(400).json({ error: 'El punto más cercano a tu ubicación ya es el destino' });
 
-    if (lugares.length !== 2) {
-      return res.status(404).json({ error: 'No se encontraron los lugares especificados' });
-    }
+    // Dijkstra
+    const { distancias, previos } = dijkstra(grafo, String(origenIdFinal));
+    const idsRutaStr = reconstruirRuta(previos, String(origenIdFinal), String(destino_id));
 
-    const origen = lugares.find(l => l.id == origen_id);
-    const destino = lugares.find(l => l.id == destino_id);
+    if (idsRutaStr.length === 0)
+      return res.status(404).json({ error: 'No existe ruta entre los lugares seleccionados' });
 
-    // 2. Consultar a OSRM (API gratuita, sin key) para obtener ruta caminando por calles reales
-    // OSRM espera coordenadas en formato: longitud,latitud
-    const url = `https://router.project-osrm.org/route/v1/foot/${origen.longitud},${origen.latitud};${destino.longitud},${destino.latitud}?overview=full&geometries=geojson`;
+    const idsRuta = idsRutaStr.map(Number);
+    const distanciaGrafo = distancias[String(destino_id)];
+    const lugaresRuta = idsRuta.map(id => mapaLugares[id]).filter(Boolean);
 
-    let rutaCallejera = null;
-    let distanciaRealMetros = 0;
-    let tiempoEstimadoSegundos = 0;
+    // OSRM: desde coords reales del usuario (o desde nodo origen) hasta destino
+    const d = mapaLugares[Number(destino_id)];
+    const origenLat = coordsOrigenReales ? coordsOrigenReales.lat : parseFloat(mapaLugares[origenIdFinal].latitud);
+    const origenLon = coordsOrigenReales ? coordsOrigenReales.lon : parseFloat(mapaLugares[origenIdFinal].longitud);
+
+    const osrmUrl = `https://router.project-osrm.org/route/v1/foot/${origenLon},${origenLat};${d.longitud},${d.latitud}?overview=full&geometries=geojson`;
+
+    let puntosRuta = [
+      { latitude: origenLat, longitude: origenLon },
+      ...lugaresRuta.map(l => ({ latitude: parseFloat(l.latitud), longitude: parseFloat(l.longitud) })),
+    ];
+    let distanciaFinal = distanciaGrafo;
+    let tiempoFinal = Math.round((distanciaGrafo / 83.3) * 10) / 10;
 
     try {
-      const osrmResponse = await axios.get(url);
-      if (osrmResponse.data && osrmResponse.data.routes && osrmResponse.data.routes.length > 0) {
-        const route = osrmResponse.data.routes[0];
-        distanciaRealMetros = route.distance; // metros reales por calles
-        tiempoEstimadoSegundos = route.duration; // segundos caminando
-        rutaCallejera = route.geometry.coordinates; // array de [longitud, latitud]
+      const osrmRes = await axios.get(osrmUrl, { timeout: 8000 });
+      if (osrmRes.data?.routes?.length > 0) {
+        const route = osrmRes.data.routes[0];
+        distanciaFinal = route.distance;
+        tiempoFinal = Math.round((route.duration / 60) * 10) / 10;
+        puntosRuta = route.geometry.coordinates.map(c => ({ latitude: c[1], longitude: c[0] }));
       }
-    } catch (osrmError) {
-      console.log('OSRM falló, usando línea recta como respaldo:', osrmError.message);
+    } catch (e) {
+      console.log('OSRM no disponible:', e.message);
     }
-
-    // 3. Construir la polilínea (de calles o línea recta como respaldo)
-    let puntos = [];
-
-    if (rutaCallejera && rutaCallejera.length > 0) {
-      // OSRM devuelve [longitud, latitud] → convertir a {latitude, longitude}
-      puntos = rutaCallejera.map(coord => ({
-        latitude: coord[1],
-        longitude: coord[0]
-      }));
-    } else {
-      // Respaldo: línea recta simple
-      puntos = [
-        { latitude: parseFloat(origen.latitud), longitude: parseFloat(origen.longitud) },
-        { latitude: parseFloat(destino.latitud), longitude: parseFloat(destino.longitud) }
-      ];
-      // Calcular distancia en línea recta como último recurso
-      const R = 6371000;
-      const dLat = (destino.latitud - origen.latitud) * Math.PI / 180;
-      const dLon = (destino.longitud - origen.longitud) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) ** 2 +
-                Math.cos(origen.latitud * Math.PI / 180) * Math.cos(destino.latitud * Math.PI / 180) *
-                Math.sin(dLon / 2) ** 2;
-      distanciaRealMetros = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      tiempoEstimadoSegundos = distanciaRealMetros / 1.4; // velocidad media caminando
-    }
-
-    // 4. Obtener recomendaciones cercanas a la ruta (usando el endpoint de recomendaciones)
-    // Simplemente devolvemos los IDs de todos los lugares como referencia
-    const [todosLugares] = await pool.query('SELECT id FROM lugares WHERE id NOT IN (?, ?)', [origen_id, destino_id]);
-    const idsRuta = [Number(origen_id), ...todosLugares.map(l => l.id).slice(0, 3), Number(destino_id)];
-
-    // 5. Obtener datos completos de los lugares en la ruta
-    const [lugaresRuta] = await pool.query(
-      'SELECT id, nombre, latitud, longitud, categoria FROM lugares WHERE id IN (?, ?)',
-      [origen_id, destino_id]
-    );
 
     res.json({
-      ruta: lugaresRuta,
-      distancia_total: Math.round(distanciaRealMetros),
-      tiempo_estimado: Math.round(tiempoEstimadoSegundos / 60 * 10) / 10, // minutos con 1 decimal
-      puntos_ruta: puntos,
-      ids_ruta: idsRuta
+      ruta: lugaresRuta.map(l => ({
+        id: l.id, nombre: l.nombre,
+        latitud: l.latitud, longitud: l.longitud,
+        categoria: l.categoria, calificacion: l.calificacion,
+      })),
+      ids_ruta: idsRuta,
+      distancia_total: Math.round(distanciaFinal),
+      tiempo_estimado: tiempoFinal,
+      puntos_ruta: puntosRuta,
+      origen_usado: coordsOrigenReales
+        ? { ...mapaLugares[origenIdFinal], es_gps: true }
+        : mapaLugares[origenIdFinal],
     });
 
   } catch (err) {
@@ -213,85 +195,104 @@ app.post('/api/ruta', async (req, res) => {
   }
 });
 
-// ────────────────────────────────────────
-// POST /api/ruta/recomendaciones
-// Recibe: { ruta_ids, radio }
-// ────────────────────────────────────────
+// ── POST /api/ruta/recomendaciones ────────────────────────────────
+// Recibe: { ruta_ids, radio, categoria_destino }
+// Busca lugares de la MISMA categoría que el destino,
+// que estén dentro del radio (metros) de cualquier nodo de la ruta,
+// y que no estén ya en la ruta.
 app.post('/api/ruta/recomendaciones', async (req, res) => {
   try {
-    const { ruta_ids, radio = 200 } = req.body;
-    if (!ruta_ids || !Array.isArray(ruta_ids) || ruta_ids.length === 0) {
+    const { ruta_ids, radio = 400, categoria_destino } = req.body;
+
+    if (!ruta_ids || !Array.isArray(ruta_ids) || ruta_ids.length === 0)
       return res.status(400).json({ error: 'ruta_ids es requerido' });
+
+    // Candidatos: misma categoría que el destino (sin restricción de calificación)
+    let candidatos;
+    if (categoria_destino) {
+      const [rows] = await pool.query(
+        'SELECT * FROM lugares WHERE categoria = ?',
+        [categoria_destino]
+      );
+      candidatos = rows;
+    } else {
+      // Si no hay categoría, usar todos con calificación >= 3.5
+      const [rows] = await pool.query('SELECT * FROM lugares WHERE calificacion >= 3.5');
+      candidatos = rows;
     }
 
-    // Obtener coordenadas de todos los lugares con buena calificación
-    const [todosLugares] = await pool.query(
-      'SELECT id, nombre, latitud, longitud, categoria, descripcion, calificacion FROM lugares WHERE calificacion >= 4.0'
+    // Obtener coordenadas de los nodos de la ruta
+    const ph = ruta_ids.map(() => '?').join(',');
+    const [nodos] = await pool.query(
+      `SELECT id, latitud, longitud FROM lugares WHERE id IN (${ph})`,
+      ruta_ids
     );
 
-    const mapaTodos = {};
-    todosLugares.forEach(l => { mapaTodos[l.id] = l; });
-
-    // Coordenadas de los lugares que están en la ruta
-    const lugaresRuta = ruta_ids.map(id => mapaTodos[id]).filter(Boolean);
-    if (lugaresRuta.length === 0) {
-      return res.json({ recomendaciones: [] });
-    }
-
-    const puntosRuta = lugaresRuta.map(l => ({ lat: l.latitud, lng: l.longitud }));
     const idsRuta = new Set(ruta_ids.map(Number));
+    const coordsNodos = nodos.map(n => ({
+      lat: parseFloat(n.latitud),
+      lng: parseFloat(n.longitud),
+    }));
+
     const recomendaciones = [];
+    for (const lugar of candidatos) {
+      // Excluir los que ya están en la ruta
+      if (idsRuta.has(Number(lugar.id))) continue;
 
-    for (const lugar of todosLugares) {
-      if (idsRuta.has(lugar.id)) continue;
-
+      // Distancia mínima a cualquier nodo de la ruta
       let minDist = Infinity;
-      for (const punto of puntosRuta) {
-        const d = getDistance(
-          { lat: lugar.latitud, lng: lugar.longitud },
-          punto
-        );
-        if (d < minDist) minDist = d;
-        if (d <= radio) break;
+      const coordLugar = {
+        lat: parseFloat(lugar.latitud),
+        lng: parseFloat(lugar.longitud),
+      };
+      for (const nodo of coordsNodos) {
+        const dist = getDistance(coordLugar, nodo);
+        if (dist < minDist) minDist = dist;
+        if (dist <= radio) break; // ya encontramos uno cercano, basta
       }
 
       if (minDist <= radio) {
-        recomendaciones.push({
-          ...lugar,
-          distancia_al_camino: minDist
-        });
+        recomendaciones.push({ ...lugar, distancia_al_camino: minDist });
       }
     }
 
-    recomendaciones.sort((a, b) => a.distancia_al_camino - b.distancia_al_camino);
-    res.json({ recomendaciones });
+    // Ordenar: más cercanos primero, luego mejor calificación
+    recomendaciones.sort((a, b) =>
+      a.distancia_al_camino !== b.distancia_al_camino
+        ? a.distancia_al_camino - b.distancia_al_camino
+        : parseFloat(b.calificacion) - parseFloat(a.calificacion)
+    );
+
+    res.json({
+      recomendaciones,
+      categoria_filtro: categoria_destino || 'todas',
+      total: recomendaciones.length,
+    });
+
   } catch (err) {
     console.error('Error en /api/ruta/recomendaciones:', err.message);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
-// ────────────────────────────────────────
-// Iniciar servidor
-// ────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
-// Endpoint para registrar automáticamente las pruebas de eficiencia
+// ── POST /api/registro-prueba ─────────────────────────────────────
 app.post('/api/registro-prueba', async (req, res) => {
   try {
     const { origen_id, destino_id, distancia, tiempo, recomendaciones } = req.body;
-    if (!origen_id || !destino_id || distancia == null || tiempo == null) {
+    if (!origen_id || !destino_id || distancia == null || tiempo == null)
       return res.status(400).json({ error: 'Faltan datos de la prueba' });
-    }
     await pool.query(
       'INSERT INTO pruebas (origen_id, destino_id, distancia, tiempo, recomendaciones) VALUES (?, ?, ?, ?, ?)',
       [origen_id, destino_id, distancia, tiempo, recomendaciones || 0]
     );
     res.json({ mensaje: 'Prueba registrada correctamente' });
-  } catch (error) {
-    console.error('Error al registrar prueba:', error.message);
-    res.status(500).json({ error: 'Error al registrar la prueba' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
+
+// ── Iniciar servidor ──────────────────────────────────────────────
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
 });
